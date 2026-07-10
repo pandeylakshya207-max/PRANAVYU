@@ -108,15 +108,24 @@ def aqi_category(aqi: float) -> str:
 # ─── Realistic AQI model (time-of-day + seasonal + source-driven) ────────────
 
 def _base_aqi_for_ward(ward_id: str, hour: int, day_offset: int = 0) -> float:
-    """Generate realistic AQI with diurnal pattern and ward-level variation."""
-    # Base pollution level by ward (Peenya highest, Electronic City lowest)
-    base: dict[str, float] = {
-        "BLR_001": 145, "BLR_002": 130, "BLR_003": 195,
-        "BLR_004": 155, "BLR_005": 120, "BLR_006": 105,
-        "BLR_007": 140, "BLR_008": 160, "BLR_009": 110,
-        "BLR_010": 135, "BLR_011": 115, "BLR_012": 150,
+    """AQI baseline: real trained model (city-level trend) x ward-level
+    relative multiplier (domain knowledge — industrial wards run higher)
+    x diurnal pattern (time-of-day)."""
+    from backend.data.city_model import predict_city_baseline
+
+    # Relative ward multipliers, normalized around 1.0 (avg of old constants).
+    # Peenya (BLR_003) stays highest — industrial area; Electronic City
+    # (BLR_006) stays lowest — tech park, less industrial/traffic load.
+    ward_relative: dict[str, float] = {
+        "BLR_001": 1.04, "BLR_002": 0.93, "BLR_003": 1.39,
+        "BLR_004": 1.11, "BLR_005": 0.86, "BLR_006": 0.75,
+        "BLR_007": 1.00, "BLR_008": 1.14, "BLR_009": 0.79,
+        "BLR_010": 0.96, "BLR_011": 0.82, "BLR_012": 1.07,
     }
-    b = base.get(ward_id, 140)
+    rel = ward_relative.get(ward_id, 1.00)
+
+    city_baseline = predict_city_baseline(day_offset=day_offset)
+    b = city_baseline * rel
 
     # Diurnal pattern: morning peak (8-10), evening peak (18-20), night industrial (22-2)
     if 8 <= hour <= 10:   diurnal = 1.35
@@ -125,12 +134,8 @@ def _base_aqi_for_ward(ward_id: str, hour: int, day_offset: int = 0) -> float:
     elif 11 <= hour <= 14: diurnal = 0.85
     else:                  diurnal = 1.00
 
-    # Random day-to-day variation (±15%)
-    day_seed = (day_offset * 31 + hash(ward_id)) % 100
-    day_var = 1.0 + (day_seed - 50) / 333.0
-
     noise = random.gauss(0, 8)
-    return max(25.0, b * diurnal * day_var + noise)
+    return max(25.0, b * diurnal + noise)
 
 
 def generate_live_readings(
