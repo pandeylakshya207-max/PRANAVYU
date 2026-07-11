@@ -107,32 +107,46 @@ def aqi_category(aqi: float) -> str:
 
 # ─── Realistic AQI model (time-of-day + seasonal + source-driven) ────────────
 
+# ─── Realistic AQI model (time-of-day + seasonal + source-driven) ────────────
+
+# Ward-level multipliers and hourly pattern, computed from REAL CPCB station
+# data (10 Bengaluru monitoring stations, 2015-2020) — see
+# ml/compute_real_ward_hourly.py for the computation and
+# ml/real_ward_hourly_constants.json for full provenance.
+#
+# NOTE ON THE HOURLY PATTERN — this replaced a wrong assumption:
+# the original code assumed morning rush hour (8-10am) was a pollution
+# PEAK (1.35x). Real data shows hour 8 is actually the LOWEST point of
+# the day (0.918x) — likely because morning boundary-layer mixing disperses
+# pollution, while it re-accumulates as the layer collapses in the evening.
+# The real evening peak is later and milder than assumed: ~19-21h at
+# ~1.06-1.08x, not 18-20h at 1.25x.
+WARD_RELATIVE: dict[str, float] = {
+    "BLR_001": 1.086, "BLR_002": 1.039, "BLR_003": 1.022,
+    "BLR_004": 1.086, "BLR_005": 0.915, "BLR_006": 0.850,
+    "BLR_007": 1.039, "BLR_008": 1.044, "BLR_009": 0.982,
+    "BLR_010": 0.850, "BLR_011": 1.086, "BLR_012": 1.086,
+}
+
+HOURLY_RELATIVE: dict[int, float] = {
+    0: 1.031, 1: 1.011, 2: 0.995, 3: 0.986, 4: 0.967, 5: 0.949,
+    6: 0.932, 7: 0.923, 8: 0.918, 9: 0.920, 10: 0.929, 11: 0.947,
+    12: 0.973, 13: 0.993, 14: 1.013, 15: 1.032, 16: 1.043, 17: 1.051,
+    18: 1.055, 19: 1.064, 20: 1.075, 21: 1.075, 22: 1.068, 23: 1.049,
+}
+
+
 def _base_aqi_for_ward(ward_id: str, hour: int, day_offset: int = 0) -> float:
-    """AQI baseline: real trained model (city-level trend) x ward-level
-    relative multiplier (domain knowledge — industrial wards run higher)
-    x diurnal pattern (time-of-day)."""
+    """AQI baseline: real trained model (city-level trend) x real ward-level
+    multiplier x real hourly diurnal pattern — all three components are now
+    derived from real CPCB data rather than guessed constants."""
     from backend.data.city_model import predict_city_baseline
 
-    # Relative ward multipliers, normalized around 1.0 (avg of old constants).
-    # Peenya (BLR_003) stays highest — industrial area; Electronic City
-    # (BLR_006) stays lowest — tech park, less industrial/traffic load.
-    ward_relative: dict[str, float] = {
-        "BLR_001": 1.04, "BLR_002": 0.93, "BLR_003": 1.39,
-        "BLR_004": 1.11, "BLR_005": 0.86, "BLR_006": 0.75,
-        "BLR_007": 1.00, "BLR_008": 1.14, "BLR_009": 0.79,
-        "BLR_010": 0.96, "BLR_011": 0.82, "BLR_012": 1.07,
-    }
-    rel = ward_relative.get(ward_id, 1.00)
-
+    rel = WARD_RELATIVE.get(ward_id, 1.00)
     city_baseline = predict_city_baseline(day_offset=day_offset)
     b = city_baseline * rel
 
-    # Diurnal pattern: morning peak (8-10), evening peak (18-20), night industrial (22-2)
-    if 8 <= hour <= 10:   diurnal = 1.35
-    elif 18 <= hour <= 20: diurnal = 1.25
-    elif hour >= 22 or hour <= 2: diurnal = 1.20  # industrial
-    elif 11 <= hour <= 14: diurnal = 0.85
-    else:                  diurnal = 1.00
+    diurnal = HOURLY_RELATIVE.get(hour, 1.00)
 
     noise = random.gauss(0, 8)
     return max(25.0, b * diurnal + noise)
