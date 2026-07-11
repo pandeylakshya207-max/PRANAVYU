@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pranavyu-backend
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        value: sqlite:///./pranavyu.db
+    healthCheckPath: /health
