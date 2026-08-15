@@ -3,6 +3,7 @@ PRANAVYU — FastAPI Backend
 Exposes all agent outputs via REST API.
 """
 from __future__ import annotations
+import logging
 import os
 import re
 import time
@@ -21,6 +22,13 @@ from backend.data.synthetic import (
 )
 from backend.models.schemas import PRANAVYUState
 
+# ─── Logging ──────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("pranavyu.api")
 
 # ─── App ─────────────────────────────────────────────────────────────────────
 
@@ -62,6 +70,7 @@ VALID_CITY_RE = re.compile(r"^[A-Za-z\s\-]{2,50}$")
 
 def _validate_city(city: str) -> str:
     if not VALID_CITY_RE.match(city):
+        logger.warning("Invalid city parameter rejected: %r", city)
         raise HTTPException(
             status_code=400,
             detail="Invalid city name. Use letters, spaces, hyphens only (2-50 chars)."
@@ -73,6 +82,7 @@ def _validate_city(city: str) -> str:
 
 @app.get("/health")
 def health() -> dict:
+    logger.debug("Health check")
     return {"status": "ok", "service": "PRANAVYU", "timestamp": datetime.utcnow().isoformat()}
 
 
@@ -85,9 +95,12 @@ def run_pipeline(
 ) -> dict:
     """Run full 6-agent pipeline for a city."""
     city = _validate_city(city)
+    logger.info("Pipeline requested city=%s refresh=%s", city, refresh)
     cached = _get_cached(city)
     if cached and not refresh:
+        logger.info("Returning cached pipeline result for city=%s", city)
         return {"source": "cache", "data": cached}
+    logger.info("Running full pipeline for city=%s", city)
     result = run_full_pipeline(city)
     _set_cached(city, result)
     return {"source": "live", "data": result}
@@ -99,6 +112,7 @@ def run_pipeline(
 def get_readings(city: str = "Bengaluru") -> dict:
     """Live AQI readings for all wards."""
     city = _validate_city(city)
+    logger.info("Readings requested city=%s", city)
     readings = generate_live_readings(city)
     return {
         "city": city,
@@ -112,6 +126,7 @@ def get_readings(city: str = "Bengaluru") -> dict:
 def get_weather(city: str = "Bengaluru") -> dict:
     """Current weather snapshot."""
     city = _validate_city(city)
+    logger.info("Weather requested city=%s", city)
     w = generate_weather(city)
     return w.model_dump()
 
@@ -120,6 +135,7 @@ def get_weather(city: str = "Bengaluru") -> dict:
 def get_sources(city: str = "Bengaluru") -> dict:
     """Emission sources registry."""
     city = _validate_city(city)
+    logger.info("Sources requested city=%s", city)
     sources = get_emission_sources(city)
     return {
         "city": city,
@@ -132,6 +148,7 @@ def get_sources(city: str = "Bengaluru") -> dict:
 def get_wards_endpoint(city: str = "Bengaluru") -> dict:
     """Ward list with coordinates."""
     city = _validate_city(city)
+    logger.info("Wards requested city=%s", city)
     wards = get_wards(city)
     return {
         "city": city,
@@ -149,6 +166,7 @@ def get_attribution(
 ) -> dict:
     """Source attribution results, optionally filtered by ward."""
     city = _validate_city(city)
+    logger.info("Attribution requested city=%s ward_id=%s", city, ward_id)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -176,6 +194,7 @@ def get_forecast(
 ) -> dict:
     """Ward-level AQI forecasts."""
     city = _validate_city(city)
+    logger.info("Forecast requested city=%s ward_id=%s hours=%s", city, ward_id, hours)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -205,6 +224,7 @@ def get_forecast(
 def get_enforcement(city: str = "Bengaluru") -> dict:
     """Enforcement intelligence plan."""
     city = _validate_city(city)
+    logger.info("Enforcement requested city=%s", city)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -226,6 +246,7 @@ class DispatchRequest(BaseModel):
 @app.post("/api/enforcement/dispatch")
 def dispatch_inspector(req: DispatchRequest) -> dict:
     """Mark an enforcement action as dispatched."""
+    logger.info("Dispatch requested action_id=%s inspector_id=%s", req.action_id, req.inspector_id)
     # In production: write to DB and notify inspector via SMS/app
     return {
         "status": "dispatched",
@@ -247,6 +268,7 @@ def get_advisories(
 ) -> dict:
     """Citizen health advisories."""
     city = _validate_city(city)
+    logger.info("Advisories requested city=%s language=%s ward_id=%s", city, language, ward_id)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -275,6 +297,7 @@ def get_advisories(
 def get_cross_city(city: str = "Bengaluru") -> dict:
     """Cross-city policy recommendations."""
     city = _validate_city(city)
+    logger.info("Cross-city requested city=%s", city)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -296,8 +319,10 @@ def get_dashboard(city: str = "Bengaluru") -> dict:
     Returns aggregated summary statistics for the frontend.
     """
     city = _validate_city(city)
+    logger.info("Dashboard requested city=%s", city)
     cached = _get_cached(city)
     if not cached:
+        logger.info("Cache miss — running pipeline for city=%s", city)
         cached = run_full_pipeline(city)
         _set_cached(city, cached)
 
@@ -323,6 +348,11 @@ def get_dashboard(city: str = "Bengaluru") -> dict:
 
     # Agent trace
     trace = cached.get("agent_trace", [])
+
+    logger.info(
+        "Dashboard response city=%s avg_aqi=%.1f wards=%d high_risk=%d",
+        city, avg_aqi, len(readings), len(high_risk)
+    )
 
     return {
         "city": city,
@@ -363,6 +393,7 @@ def get_dashboard(city: str = "Bengaluru") -> dict:
 def get_trace(city: str = "Bengaluru") -> dict:
     """Return agent execution trace for transparency dashboard."""
     city = _validate_city(city)
+    logger.info("Trace requested city=%s", city)
     cached = _get_cached(city)
     if not cached:
         return {"city": city, "trace": [], "message": "No trace yet. Run /api/pipeline/{city} first."}
