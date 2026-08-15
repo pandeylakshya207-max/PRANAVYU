@@ -4,11 +4,12 @@ Exposes all agent outputs via REST API.
 """
 from __future__ import annotations
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -56,6 +57,18 @@ def _set_cached(city: str, data: dict[str, Any]) -> None:
     _cache_time[city] = time.time()
 
 
+VALID_CITY_RE = re.compile(r"^[A-Za-z\s\-]{2,50}$")
+
+
+def _validate_city(city: str) -> str:
+    if not VALID_CITY_RE.match(city):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid city name. Use letters, spaces, hyphens only (2-50 chars)."
+        )
+    return city
+
+
 # ─── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -71,6 +84,7 @@ def run_pipeline(
     refresh: bool = Query(False, description="Force refresh, bypass cache"),
 ) -> dict:
     """Run full 6-agent pipeline for a city."""
+    city = _validate_city(city)
     cached = _get_cached(city)
     if cached and not refresh:
         return {"source": "cache", "data": cached}
@@ -84,6 +98,7 @@ def run_pipeline(
 @app.get("/api/readings/{city}")
 def get_readings(city: str = "Bengaluru") -> dict:
     """Live AQI readings for all wards."""
+    city = _validate_city(city)
     readings = generate_live_readings(city)
     return {
         "city": city,
@@ -96,6 +111,7 @@ def get_readings(city: str = "Bengaluru") -> dict:
 @app.get("/api/weather/{city}")
 def get_weather(city: str = "Bengaluru") -> dict:
     """Current weather snapshot."""
+    city = _validate_city(city)
     w = generate_weather(city)
     return w.model_dump()
 
@@ -103,6 +119,7 @@ def get_weather(city: str = "Bengaluru") -> dict:
 @app.get("/api/sources/{city}")
 def get_sources(city: str = "Bengaluru") -> dict:
     """Emission sources registry."""
+    city = _validate_city(city)
     sources = get_emission_sources(city)
     return {
         "city": city,
@@ -114,6 +131,7 @@ def get_sources(city: str = "Bengaluru") -> dict:
 @app.get("/api/wards/{city}")
 def get_wards_endpoint(city: str = "Bengaluru") -> dict:
     """Ward list with coordinates."""
+    city = _validate_city(city)
     wards = get_wards(city)
     return {
         "city": city,
@@ -130,6 +148,7 @@ def get_attribution(
     ward_id: Optional[str] = Query(None),
 ) -> dict:
     """Source attribution results, optionally filtered by ward."""
+    city = _validate_city(city)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -156,6 +175,7 @@ def get_forecast(
     hours: int = Query(24, ge=1, le=72),
 ) -> dict:
     """Ward-level AQI forecasts."""
+    city = _validate_city(city)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -184,6 +204,7 @@ def get_forecast(
 @app.get("/api/enforcement/{city}")
 def get_enforcement(city: str = "Bengaluru") -> dict:
     """Enforcement intelligence plan."""
+    city = _validate_city(city)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -225,6 +246,7 @@ def get_advisories(
     high_risk_only: bool = Query(False),
 ) -> dict:
     """Citizen health advisories."""
+    city = _validate_city(city)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -252,6 +274,7 @@ def get_advisories(
 @app.get("/api/cross-city/{city}")
 def get_cross_city(city: str = "Bengaluru") -> dict:
     """Cross-city policy recommendations."""
+    city = _validate_city(city)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -272,6 +295,7 @@ def get_dashboard(city: str = "Bengaluru") -> dict:
     All-in-one dashboard endpoint.
     Returns aggregated summary statistics for the frontend.
     """
+    city = _validate_city(city)
     cached = _get_cached(city)
     if not cached:
         cached = run_full_pipeline(city)
@@ -338,6 +362,7 @@ def get_dashboard(city: str = "Bengaluru") -> dict:
 @app.get("/api/trace/{city}")
 def get_trace(city: str = "Bengaluru") -> dict:
     """Return agent execution trace for transparency dashboard."""
+    city = _validate_city(city)
     cached = _get_cached(city)
     if not cached:
         return {"city": city, "trace": [], "message": "No trace yet. Run /api/pipeline/{city} first."}
