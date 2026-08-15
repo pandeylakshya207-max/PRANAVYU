@@ -134,12 +134,21 @@ def build_workflow() -> Any:
 
 # ─── Run Helper ───────────────────────────────────────────────────────────────
 
+# Module-level singleton — built once on import, not per request
+_WORKFLOW = None
+
+def _get_workflow() -> Any:
+    global _WORKFLOW
+    if _WORKFLOW is None:
+        _WORKFLOW = build_workflow()
+    return _WORKFLOW
+
 def run_full_pipeline(city: str = "Bengaluru", query: str | None = None) -> dict[str, Any]:
     """
     Execute the full PRANAVYU multi-agent pipeline synchronously.
     Returns the final state as a dict.
     """
-    graph = build_workflow()
+    graph = _get_workflow()
     initial_state = PRANAVYUState(city=city, query=query).model_dump()
     config = {"configurable": {"thread_id": f"pranavyu_{city}_{datetime.utcnow().strftime('%H%M%S')}"}}
 
