@@ -29,90 +29,87 @@ PRANAVYU is a **multi-agent AI platform** that tells city administrators not jus
 
 ---
 
+## Current status
+
+This is a hackathon prototype. What runs today:
+
+- **Real:** the six-agent LangGraph pipeline, the FastAPI endpoints, the React dashboard, the Gaussian plume model, a forecast model trained on historical CPCB data for Bengaluru, and the test suite.
+- **Synthetic:** the emission sources, and the ward readings whenever live data is unavailable. Source attribution and enforcement ranking therefore run on invented inputs.
+- **Optional:** live readings from OpenAQ are tried first, and advisory text comes from a Groq-hosted model when an API key is set.
+- **Not built:** live CPCB and weather feeds, satellite processing, a vector database, message delivery by WhatsApp or SMS, and any production database.
+
+---
+
 ## 🏗️ Architecture
 
-```
-DATA SOURCES          6-AGENT PIPELINE (LangGraph)          OUTPUTS
-────────────          ────────────────────────────           ───────
-CPCB CAAQMS    →   [Data Ingestion]                     → Live AQI Map
-Sentinel-5P    →   [Attribution Agent]  ← Gaussian      → Source Attribution
-IMD Weather    →   [Forecast Agent]     ← ML Model      → 72h Ward Forecast
-OpenAQ         →   [Enforcement Agent] ← Bayesian       → Inspector Dispatch
-OSM / Census   →   [Citizen Agent]     ← LLM (Groq)    → Multilingual Alerts
-Permit DBs     →   [Cross-City Agent]  ← RAG            → Policy Intelligence
-```
+    Readings (OpenAQ when reachable, otherwise synthetic)
+            |
+            v
+    LangGraph pipeline:
+    ingestion -> attribution -> forecast -> enforcement -> advisory -> cross-city
+            |
+            v
+    FastAPI endpoints -> React dashboard
+    (map, attribution, forecast, enforcement queue, advisories, agent trace)
 
 ---
 
 ## ⚡ Key Capabilities
 
-| Capability | What it does |
-|-----------|-------------|
-| **🔍 Source Attribution** | Identifies which factories, construction sites, or roads are causing AQI spikes at ward level — using Gaussian reverse plume modeling + satellite thermal anomalies. Outputs: `"61% cement plant, 83% confidence"` |
-| **📈 72h Forecast** | Predicts AQI at ward level 72 hours ahead using weather forecasts, emission schedules, atmospheric dispersion modeling, and ML models. Gives schools and hospitals 16+ hours of advance warning before dangerous spikes |
-| **🚔 Enforcement Intelligence** | Predicts *when* violators are most likely to be caught using 90-day violation pattern analysis. Outputs exact GPS coordinates, optimal inspection time window, violation probability score, and court-admissible evidence package — all in one click |
-| **📢 Multilingual Citizen Advisories** | Auto-generates ward-level health advisories in English, Kannada, Tamil, and Hindi — WhatsApp and SMS ready, dispatched to vulnerable populations (schools, hospitals, outdoor workers) hours before AQI spikes |
-| **🏙️ Cross-City Learning** | RAG-powered policy intelligence engine that surfaces what worked in comparable Indian cities — with before/after AQI evidence, implementation difficulty rating, and city-specific adaptation recommendations |
+| Capability | What the prototype does |
+|---|---|
+| **Source attribution** | Estimates each source's share of a ward's pollution with a Gaussian plume model and Pasquill-Gifford stability classes. Runs on synthetic emission sources. |
+| **72-hour forecast** | Projects AQI per ward from a city-level model trained on historical data, with per-ward and per-hour multipliers computed from real station readings. Error compounds over multiple days; see the limitations section below. |
+| **Enforcement ranking** | Ranks sources for inspection by estimated violation probability and AQI impact. Inputs are synthetic. |
+| **Citizen advisories** | Generates ward-level advisories in English, Kannada, Tamil and Hindi, limited to 160 characters. Uses a hosted language model when a key is configured and templates otherwise. Nothing is sent to anyone. |
+| **Cross-city suggestions** | Returns policy measures from a small built-in set of outcomes in other Indian cities. |
 
 ---
 
 ## 🤖 The 6 Agents
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│              ORCHESTRATOR (LangGraph StateGraph)            │
-└───┬─────────┬──────────┬──────────┬──────────┬─────────────┘
-    ↓         ↓          ↓          ↓          ↓
-┌───────┐ ┌───────┐ ┌────────┐ ┌────────┐ ┌──────────┐
-│ Data  │ │Source │ │Predict │ │Enforce │ │ Citizen  │
-│Ingest │→│ Attr. │→│  AQI   │→│ Intel  │→│ Advisory │
-│       │ │Agent  │ │ Agent  │ │ Agent  │ │  Agent   │
-└───────┘ └───────┘ └────────┘ └────────┘ └──────────┘
-                                                ↓
-                                        ┌──────────────┐
-                                        │  Cross-City  │
-                                        │Learning Agent│
-                                        └──────────────┘
-```
-
-| Agent | Role | Core Method |
-|-------|------|-------------|
-| **Data Ingestion** | Pulls live AQI, weather, emission sources | CPCB CAAQMS API + OpenAQ + IMD |
-| **Source Attribution** | Identifies pollution sources per ward | Gaussian reverse plume + Pasquill-Gifford stability |
-| **Predictive AQI** | 72-hour ward-level forecast | Diurnal model + wind dispersion + mixing height |
-| **Enforcement Intelligence** | Ranks inspector dispatch targets | Bayesian violation probability × AQI impact |
-| **Citizen Advisory** | Multilingual health alerts | LLaMA-3.3-70B via Groq + IndicTrans2 |
-| **Cross-City Learning** | Evidence-based policy recommendations | RAG over 6-city policy outcomes corpus |
+| Agent | Role | Method |
+|---|---|---|
+| **Data ingestion** | Loads readings, weather and sources | OpenAQ when reachable, otherwise synthetic data |
+| **Source attribution** | Shares of pollution per ward | Gaussian reverse plume, Pasquill-Gifford stability |
+| **Forecast** | 72-hour ward-level AQI | Trained city model, ward and hourly multipliers, wind dispersion |
+| **Enforcement** | Ranks inspection targets | Violation probability times AQI impact |
+| **Citizen advisory** | Advisories in four languages | LLaMA 3.3 70B via Groq when configured, templates otherwise |
+| **Cross-city** | Policy suggestions | Lookup over a built-in six-city set of outcomes |
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| **Agent Orchestration** | LangGraph 1.2 (StateGraph) | Best multi-agent state management, full execution tracing |
-| **LLM** | LLaMA-3.3-70B via Groq | Free tier, fastest inference, multilingual |
-| **Vector DB** | Qdrant | Open-source, hybrid search, no lock-in |
-| **Backend** | FastAPI 0.115 + Python 3.12 | Async, auto OpenAPI docs, production-grade |
-| **Frontend** | React 18 + Recharts + Leaflet | Real-time geospatial heatmap + forecast charts |
-| **Dispersion Model** | Custom Gaussian Plume (Scipy) | Physics-based source attribution, no black box |
-| **Databases** | PostgreSQL + PostGIS, Redis | Spatial queries, real-time caching |
-| **Containerization** | Docker + docker-compose | One-command production deployment |
-| **Data Sources** | CPCB CAAQMS, Sentinel-5P, IMD, OpenAQ | All free, government-maintained, real-time |
+| Layer | Technology |
+|---|---|
+| **Agent orchestration** | LangGraph (StateGraph) |
+| **Language model** | LLaMA 3.3 70B via Groq, optional |
+| **Backend** | FastAPI, Python 3.12 |
+| **Frontend** | React 18, Recharts, Leaflet |
+| **Dispersion model** | Custom Gaussian plume (SciPy) |
+| **Forecast model** | scikit-learn RandomForest |
+| **Containers** | Docker, docker-compose |
+
+The compose file also starts Redis and Qdrant. The current code does not use either.
 
 ---
 
 ## 📊 Evaluation Metrics
 
-| Metric | PRANAVYU Result | Baseline |
-|--------|----------------|---------|
-| AQI Forecast RMSE (24h) | ~35 μg/m³ | Persistence: ~65 μg/m³ |
-| Source Attribution Agreement | ~78% vs CPCB published profiles | Random: 25% |
-| Agent Pipeline Latency | **50ms** for full 6-agent run | Manual analysis: 2-4 hours |
-| SMS Advisory Length | ≤160 chars (enforced) | — |
-| Test Coverage | **27/27 tests passing** | — |
-| Languages Supported | 4 (EN, KN, TA, HI) | — |
-| Wards Monitored (Bengaluru) | 12 (expandable to any NCAP city) | — |
+Measured, and reproducible with `ml/train_model.py` (results saved in `ml/metrics.json`). City-level daily AQI for Bengaluru, 2,147 training days and 379 test days:
+
+| Metric | Naive baseline (yesterday's value) | RandomForest |
+|---|---|---|
+| RMSE | 13.13 | 12.84 |
+| MAE | 9.07 | 8.96 |
+| R2 | n/a | 0.719 |
+
+The model beats the baseline by 2.2% RMSE.
+
+Other checks: 27 of 27 tests pass (`python3 scripts/test_all.py`), and SMS advisories are limited to 160 characters.
+
+Not measured: the accuracy of source attribution (the sources are synthetic, so there is no ground truth), ward-level forecast error, and multi-day forecast error.
 
 ---
 
@@ -212,6 +209,8 @@ PRANAVYU/
 ---
 
 ## 🎯 Business Model
+
+> Hackathon pitch material. The figures in this section are estimates and have not been validated.
 
 | Segment | Customer | Price | TAM |
 |---------|---------|-------|-----|
